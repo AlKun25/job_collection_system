@@ -1,12 +1,13 @@
+import sys
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
-import pandas as pd
-import sys
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 # Add the dags directory to the Python path
-sys.path.append('/opt/airflow/dags')
+sys.path.append("/opt/airflow/dags")
 
 # Import custom modules
 from dags.job_utils.job_board_search import search_job_boards, URL_PATTERNS, ROLES
@@ -14,146 +15,138 @@ from dags.job_utils.db.models import Company
 
 # Default arguments
 default_args = {
-    'owner': 'airflow',
-    'depends_on_past': False,
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=1),
+    "owner": "airflow",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=1),
 }
 
 # Create DAG
 dag = DAG(
-    'job_board_discovery',
+    "job_board_discovery",
     default_args=default_args,
-    description='Discover job boards for companies',
-    schedule_interval='0 0 * * 0',  # Weekly on Sunday
+    description="Discover job boards for companies",
+    schedule_interval="0 0 * * 0",  # Weekly on Sunday
     start_date=datetime(2023, 1, 1),
     catchup=False,
-    tags=['job_search'],
+    tags=["job_search"],
 )
 
-# Function to search for job boards for a specific URL pattern and role
-def search_and_save_job_boards(url_pattern: str, role: str, platform:str, **kwargs):
+# Function to get database session
+def get_db_session():
+    engine = create_engine("postgresql://airflow:airflow@postgres/job_collection")
+    Session = sessionmaker(bind=engine)
+    return Session()
+
+# Function to search for job boards and directly save to the database
+def search_and_save_to_db(url_pattern: str, role: str, platform: str, **kwargs):
     max_companies = int(Variable.get("max_companies_per_search", default_var=100))
     results = search_job_boards(url_pattern=url_pattern, role=role, platform=platform, max_companies=max_companies)
     
-    # Save results to CSV
-    if results:
-        df = pd.DataFrame(results, columns=["Company", "URL", "Platform"])
-        output_path = f"/opt/airflow/data/job_boards/{url_pattern.split('//')[1].split('.')[0]}_{role.replace(' ', '_')}.csv"
-        df.to_csv(output_path, index=False)
-        
-        return {"count": len(results), "file_path": output_path}
+    # Save results directly to database
+    session = get_db_session()
+    companies_added = 0
+    companies_updated = 0
     
-    return {"count": 0, "file_path": None}
-
-# Function to merge all search results
-def merge_search_results(**kwargs):
-    ti = kwargs['ti']
-    all_results = []
-    
-    for platform,_ in URL_PATTERNS.items():
-        for role in ROLES:
-            task_id = f"search_{platform}_{role.replace(' ', '_')}"
-            result = ti.xcom_pull(task_ids=task_id)
+    try:
+        for company, url, platform_name in results:
+            # Check if company already exists
+            existing = session.query(Company).filter_by(
+                name=company, 
+                platform=platform_name
+            ).first()
             
-            if result and result['count'] > 0:
-                df = pd.read_csv(result['file_path'])
-                all_results.append(df)
-    
-    if all_results:
-        # Combine all results and remove duplicates
-        combined_df = pd.concat(all_results, ignore_index=True)
-        combined_df.drop_duplicates(subset=["Company", "Platform"], inplace=True)
-        
-        # Save combined results
-        output_path = "/opt/airflow/data/job_boards/all_companies.csv"
-        combined_df.to_csv(output_path, index=False)
-        
-        return {"count": len(combined_df), "file_path": output_path}
-    
-    return {"count": 0, "file_path": None}
-
-# Function to save companies to database
-def save_companies_to_db(**kwargs):
-    ti = kwargs['ti']
-    result = ti.xcom_pull(task_ids='merge_search_results')
-    
-    if result and result['count'] > 0:
-        df = pd.read_csv(result['file_path'])
-        
-        # Connect to database
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        
-        engine = create_engine('postgresql://airflow:airflow@postgres/job_collection')
-        Session = sessionmaker(bind=engine)
-        session = Session()
-        
-        # Add companies to database
-        companies_added = 0
-        try:
-            for _, row in df.iterrows():
-                company = Company(
-                    name=row['Company'],
-                    platform=row['Platform'],
+            if not existing:
+                # Add new company
+                new_company = Company(
+                    name=company,
+                    platform=platform_name,
+                    url=url,
                     updated_at=datetime.now()
                 )
-                
-                # Check if company already exists
-                existing = session.query(Company).filter_by(
-                    name=row['Company'], 
-                    platform=row['Platform']
-                ).first()
-                
-                if not existing:
-                    session.add(company)
-                    companies_added += 1
-            
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            raise e
-        finally:
-            session.close()
+                session.add(new_company)
+                companies_added += 1
+            else:
+                # Update existing company
+                existing.updated_at = datetime.now()
+                existing.url = url
+                companies_updated += 1
         
-        return {"companies_added": companies_added}
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        raise e
+    finally:
+        session.close()
     
-    return {"companies_added": 0}
+    return {
+        "companies_added": companies_added, 
+        "companies_updated": companies_updated,
+        "platform": platform, 
+        "role": role
+    }
+
+# Function to generate a report of all search operations
+def generate_report(**kwargs):
+    ti = kwargs['ti']
+    total_companies_added = 0
+    total_companies_updated = 0
+    report = []
+    
+    # Gather results from all search tasks
+    for platform, _ in URL_PATTERNS.items():
+        for role in ROLES:
+            task_id = f"search_save_{platform}_{role.replace(' ', '_')}"
+            result = ti.xcom_pull(task_ids=task_id)
+            
+            if result:
+                total_companies_added += result.get('companies_added', 0)
+                total_companies_updated += result.get('companies_updated', 0)
+                report.append({
+                    'platform': result.get('platform', ''),
+                    'role': result.get('role', ''),
+                    'companies_added': result.get('companies_added', 0),
+                    'companies_updated': result.get('companies_updated', 0)
+                })
+    
+    # Get current total number of companies in the database
+    session = get_db_session()
+    try:
+        total_in_db = session.query(Company).count()
+    finally:
+        session.close()
+    
+    return {
+        "total_companies_added": total_companies_added,
+        "total_companies_updated": total_companies_updated,
+        "total_companies_in_db": total_in_db,
+        "report": report
+    }
 
 # Create tasks for each URL pattern and role combination
 search_tasks = []
-for platform,url_pattern in URL_PATTERNS.items():
+for platform, url_pattern in URL_PATTERNS.items():
     for role in ROLES:
         # platform = url_pattern.split('//')[1].split('.')[0]
-        task_id = f"search_{platform}_{role.replace(' ', '_')}"
-        
+        task_id = f"search_save_{platform}_{role.replace(' ', '_')}"
+
         task = PythonOperator(
             task_id=task_id,
-            python_callable=search_and_save_job_boards,
-            op_kwargs={'url_pattern': url_pattern, 'role': role, 'platform': platform},
+            python_callable=search_and_save_to_db,
+            op_kwargs={"url_pattern": url_pattern, "role": role, "platform": platform},
             dag=dag,
         )
-        
+
         search_tasks.append(task)
 
-# Merge results task
-merge_task = PythonOperator(
-    task_id='merge_search_results',
-    python_callable=merge_search_results,
-    dag=dag,
-)
-
-# Save to database task
-save_db_task = PythonOperator(
-    task_id='save_companies_to_db',
-    python_callable=save_companies_to_db,
+report_task = PythonOperator(
+    task_id="generate_report",
+    python_callable=generate_report,
     dag=dag,
 )
 
 # Set task dependencies
 for task in search_tasks:
-    task >> merge_task
-
-merge_task >> save_db_task
+    task >> report_task
