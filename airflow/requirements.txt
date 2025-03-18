@@ -1,0 +1,14 @@
+spark-nlp
+pyspark
+pandas
+numpy
+selenium
+tqdm
+beautifulsoup4
+requests
+psycopg2-binary
+SQLAlchemy
+kafka-python
+geopy
+apache_airflow
+webdriver-manager

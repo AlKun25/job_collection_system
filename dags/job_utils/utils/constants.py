@@ -1,0 +1,1 @@
+JSON_DIR = "data/job_boards"
