@@ -8,7 +8,7 @@ services:
       - POSTGRES_MULTIPLE_DATABASES=job_collection
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
-      # - ./postgres-init-script.sh:/docker-entrypoint-initdb.d/postgres-init-script.sh
+      - ./postgres-init-script.sh:/docker-entrypoint-initdb.d/postgres-init-script.sh
     ports:
       - "5432:5432"
     healthcheck:
@@ -38,13 +38,13 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - DATABASE_URL=postgresql://airflow:airflow@postgres/job_collection
       - PYTHONPATH=/opt/airflow
-      - AIRFLOW__LOGGING__LOGGING_LEVEL=DEBUG
     volumes:
       - ./dags:/opt/airflow/dags
       - ./data:/opt/airflow/data
-      - ./scripts:/opt/airflow/scripts
     entrypoint: /bin/bash
-    command: -c "chmod -R 777 /opt/airflow/data/ &&airflow db init && airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin && python /opt/airflow/dags/job_utils/db/init_db.py && python /opt/airflow/dags/job_utils/db/init_db.py"
+    command: -c "airflow db init && \
+      airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin && \
+      python /opt/airflow/dags/job_utils/db/init_db.py"
 
   airflow-webserver:
     build: 
@@ -59,11 +59,9 @@ services:
       - AIRFLOW__WEBSERVER__SECRET_KEY=your_secret_key
       - DATABASE_URL=postgresql://airflow:airflow@postgres/job_collection
       - PYTHONPATH=/opt/airflow
-      - AIRFLOW__LOGGING__LOGGING_LEVEL=DEBUG
     volumes:
       - ./dags:/opt/airflow/dags
       - ./data:/opt/airflow/data
-      - ./scripts:/opt/airflow/scripts
     ports:
       - "8080:8080"
     command: webserver
