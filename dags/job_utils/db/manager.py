@@ -50,23 +50,23 @@ class DBContext:
     def __init__(self, connection_url):
         self.connection_url = connection_url
         self.session = None
-        
+
     def __enter__(self):
         engine = create_engine(self.connection_url)
         Session = sessionmaker(bind=engine)
         self.session = Session()
         return self
-        
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             self.session.close()
-            
+
     # Database operation methods
     def add(self, obj):
         self.session.add(obj)
         self.session.commit()
         return obj
-    
+
     def get(self, model, obj_id: int):
         return self._session.query(model).get(obj_id)
 
