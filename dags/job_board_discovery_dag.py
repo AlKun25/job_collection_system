@@ -38,43 +38,12 @@ dag = DAG(
 # Function to search for job boards and directly save to the database
 def search_and_save_to_db(url_pattern: str, role: str, platform: str, **kwargs):
     max_companies = int(Variable.get("max_companies_per_search", default_var=100))
-    results = search_job_boards(
+    companies_added, companies_updated = search_job_boards(
         url_pattern=url_pattern,
         role=role,
         platform=platform,
         max_companies=max_companies,
     )
-
-    # Save results directly to database
-    connection_url = "postgresql://airflow:airflow@postgres/job_collection"
-    companies_added = 0
-    companies_updated = 0
-    
-    try:
-        with DBContext(connection_url=connection_url) as db_manager:
-            for company, url, platform_name in results:
-                # Check if company already exists
-                existing_company = db_manager.get_by_filter(
-                    model=Company, name=company, platform=platform_name
-                )
-
-                if existing_company is None:
-                    # Add new company
-                    new_company = Company(
-                        name=company,
-                        platform=platform_name,
-                        updated_at=datetime.now(),
-                    )
-                    db_manager.add(new_company)
-                    companies_added += 1
-                else:
-                    # Update existing company
-                    db_manager.update(
-                        obj_id=existing_company.id, model=Company, updated_at=datetime.now()
-                    )
-                    companies_updated += 1
-    except Exception as e:
-        raise e
 
     return {
         "companies_added": companies_added,

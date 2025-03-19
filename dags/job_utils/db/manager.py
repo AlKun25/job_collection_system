@@ -1,6 +1,6 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
-from typing import Dict
+from typing import Dict, List
 from threading import Lock
 
 class DBManager:
@@ -87,3 +87,28 @@ class DBContext:
         obj = self.get(model, obj_id)
         self._session.delete(obj)
         self._session.commit()
+
+    def count(self, model, **kwargs):
+        """Count the number of records for a model with optional filters"""
+        query = self.session.query(func.count()).select_from(model)
+        if kwargs:
+            query = query.filter_by(**kwargs)
+        return query.scalar()
+
+    def bulk_add(self, objects: List):
+        """Add multiple objects at once"""
+        self.session.add_all(objects)
+        self.session.commit()
+        return objects
+
+    def get_or_create(self, model, **kwargs):
+        """Get an object or create it if it doesn't exist"""
+        instance = self.session.query(model).filter_by(**kwargs).first()
+        if instance:
+            return instance, False
+        else:
+            params = dict((k, v) for k, v in kwargs.items())
+            instance = model(**params)
+            self.session.add(instance)
+            self.session.commit()
+            return instance, True
