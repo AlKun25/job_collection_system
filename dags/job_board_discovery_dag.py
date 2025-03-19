@@ -35,12 +35,6 @@ dag = DAG(
 )
 
 
-# Function to get database manager
-# def get_db_manager():
-#     connection_url = "postgresql://airflow:airflow@postgres/job_collection"
-#     return DBManager("airflow_system", connection_url)
-
-
 # Function to search for job boards and directly save to the database
 def search_and_save_to_db(url_pattern: str, role: str, platform: str, **kwargs):
     max_companies = int(Variable.get("max_companies_per_search", default_var=100))
@@ -64,12 +58,11 @@ def search_and_save_to_db(url_pattern: str, role: str, platform: str, **kwargs):
                     model=Company, name=company, platform=platform_name
                 )
 
-                if not existing_company:
+                if existing_company is None:
                     # Add new company
                     new_company = Company(
                         name=company,
                         platform=platform_name,
-                        url=url,
                         updated_at=datetime.now(),
                     )
                     db_manager.add(new_company)
@@ -118,19 +111,20 @@ def generate_report(**kwargs):
 
     # Get current total number of companies in the database
     # For counting total records, we'll need to use a database session directly
-    # since DBManager doesn't expose a count method
+    # since DBContext doesn't expose a count method
+    total_in_db = 0
     with DBContext(connection_url="postgresql://airflow:airflow@postgres/job_collection") as db_manager:
         all_companies = db_manager.get_by_filter(model=Company, return_all=True)
         if all_companies:  # handling None
             total_in_db = len(all_companies)
         else:
             total_in_db = 0
-        return {
-            "total_companies_added": total_companies_added,
-            "total_companies_updated": total_companies_updated,
-            "total_companies_in_db": total_in_db,
-            "report": report,
-        }
+    return {
+        "total_companies_added": total_companies_added,
+        "total_companies_updated": total_companies_updated,
+        "total_companies_in_db": total_in_db,
+        "report": report,
+    }
 
 
 def send_email(**kwargs):
@@ -159,14 +153,13 @@ def send_email(**kwargs):
                 ]
             ),
         )
-
-        yag = yagmail.SMTP("my@gmail.com")
+        # !: Authentication not working - keyring registration required
+        yag = yagmail.SMTP("kunalm.jobs@gmail.com")
         try:
             yag.send(
                 to=receiver,
                 subject=f"YAGMAIL TEST: Job Board Discovery Report {datetime.now().strftime('%Y-%m-%d')}",
                 contents=body,
-                # attachments=filename,
             )
         except Exception as e:
             raise e

@@ -68,19 +68,19 @@ class DBContext:
         return obj
 
     def get(self, model, obj_id: int):
-        return self._session.query(model).get(obj_id)
+        return self.session.query(model).get(obj_id)
 
     def get_by_filter(self, model, return_all: bool = False, **kwargs):
         if return_all:
-            return self._session.query(model).filter_by(**kwargs).all()
+            return self.session.query(model).filter_by(**kwargs).all()
         else:
-            return self._session.query(model).filter_by(**kwargs).first()
+            return self.session.query(model).filter_by(**kwargs).first()
 
     def update(self, obj_id: int, model, **kwargs):
         obj = self.get(model, obj_id)
         for key, value in kwargs.items():
             setattr(obj, key, value)
-        self._session.commit()
+        self.session.commit()
         return obj
 
     def delete(self, obj_id: int, model):
