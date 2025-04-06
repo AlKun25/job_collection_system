@@ -12,4 +12,5 @@ kafka-python
 geopy
 apache_airflow
 webdriver-manager
+python-dotenv
 yagmail
