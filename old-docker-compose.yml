@@ -1,0 +1,145 @@
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+      - POSTGRES_MULTIPLE_DATABASES=job_collection
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./postgres-init-script.sh:/docker-entrypoint-initdb.d/postgres-init-script.sh
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+    restart: always
+
+  adminer:
+    image: adminer:latest
+    restart: always
+    depends_on:
+      - postgres
+    ports:
+      - "8081:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+
+  airflow-init:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - DATABASE_URL=postgresql://airflow:airflow@postgres/job_collection
+      - PYTHONPATH=/opt/airflow
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+    entrypoint: /bin/bash
+    command: -c "airflow db init && \
+      airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin && \
+      python /opt/airflow/dags/job_utils/db/init_db.py"
+
+  airflow-webserver:
+    build: 
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres
+      - airflow-init
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__WEBSERVER__SECRET_KEY=your_secret_key
+      - DATABASE_URL=postgresql://airflow:airflow@postgres/job_collection
+      - PYTHONPATH=/opt/airflow
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres
+      - airflow-init
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - DATABASE_URL=postgresql://airflow:airflow@postgres/job_collection
+      - PYTHONPATH=/opt/airflow
+      - AIRFLOW__LOGGING__LOGGING_LEVEL=DEBUG
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ./scripts:/opt/airflow/scripts
+    command: scheduler
+
+  spark-master:
+    image: bitnami/spark:3.4.1
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "8082:8080"
+      - "7077:7077"
+    volumes:
+      - ./data:/opt/bitnami/spark/data
+      - ./jars:/opt/bitnami/spark/jars
+
+  spark-worker:
+    image: bitnami/spark:3.4.1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+    depends_on:
+      - spark-master
+    volumes:
+      - ./data:/opt/bitnami/spark/data
+      - ./jars:/opt/bitnami/spark/jars
+
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    ports:
+      - "2181:2181"
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    volumes:
+      - zookeeper-data:/bitnami/zookeeper
+
+  kafka:
+    image: bitnami/kafka:latest
+    depends_on:
+      - zookeeper
+    environment:
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    volumes:
+      - kafka-data:/bitnami/kafka
+
+volumes:
+  kafka-data:
+  zookeeper-data:
