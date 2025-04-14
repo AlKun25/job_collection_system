@@ -5,18 +5,15 @@ from airflow.models import Variable
 import pandas as pd
 import json
 import os
-import sys
 import time
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Add the dags directory to the Python path
-sys.path.append('/opt/airflow/dags')
 
 # Import custom modules
 from dags.job_utils.boards.ashby import AshbyAPI
 from dags.job_utils.db.models import Company, Job
-from dags.job_utils.db.manager import DBManager
+from dags.job_utils.db.manager import DBContext
 
 # Default arguments
 default_args = {
@@ -50,7 +47,7 @@ def get_companies_to_process(**kwargs):
         # Get companies to process
         companies = session.query(Company).filter(
             Company.platform == 'Ashby'  # Start with just Ashby
-        ).all()
+        ).all()[:5]
         
         # Convert to list of dictionaries
         companies_list = [
@@ -71,54 +68,42 @@ def get_companies_to_process(**kwargs):
     finally:
         session.close()
 
-# Function to collect job postings for a company
 def collect_job_postings(company_data, **kwargs):
-    # Create DB manager with user ID from context
-    db_manager = DBManager(
-        user_id=kwargs['run_id'],
-        connection_url='postgresql://airflow:airflow@postgres/job_collection'
-    )
-    
-    # Use your existing DB manager for database operations
-    company_code = company_data["name"]
-    platform = company_data["platform"]
-    
-    # Initialize the appropriate API client
-    if platform == "Ashby":
-        api_client = AshbyAPI(db=db_manager, company_code=company_code)
-    else:
-        print(f"Unsupported platform: {platform}")
-        return []
-    
-    # Get job postings
-    job_postings = api_client.process_jobs()
-    
-    # Save to JSON file
-    if job_postings:
-        output_dir = f"/opt/airflow/data/job_postings/{platform.lower()}"
-        os.makedirs(output_dir, exist_ok=True)
+    connection_url = 'postgresql://airflow:airflow@postgres/job_collection'
+    with DBContext(connection_url) as db_context:
+        # Use your existing DB manager for database operations
+        company_code = company_data["name"]
+        platform = company_data["platform"]
+        api_client = None
+        # Initialize the appropriate API client
+        if platform == "Ashby":
+            api_client = AshbyAPI(db=db_context, company_code=company_code)
+        else:
+            print(f"Unsupported platform: {platform}")
+            return []
         
-        output_file = f"{output_dir}/{company_code}.json"
-        with open(output_file, 'w') as f:
-            json.dump(job_postings, f, indent=2)
+        # Get job postings
+        job_postings = api_client.process_jobs()
         
-        print(f"Saved {len(job_postings)} job postings for {company_code} to {output_file}")
-        
-        return {
-            "company_id": company_data["id"],
-            "company_code": company_code,
-            "platform": platform,
-            "job_count": len(job_postings),
-            "file_path": output_file
-        }
-    
-    return {
-        "company_id": company_data["id"],
-        "company_code": company_code,
-        "platform": platform,
-        "job_count": 0,
-        "file_path": None
-    }
+        # Save to JSON file
+        if job_postings:
+            output_dir = f"/opt/airflow/data/job_postings/{platform.lower()}"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            output_file = f"{output_dir}/{company_code}.json"
+            with open(output_file, 'w') as f:
+                json.dump(job_postings, f, indent=2)
+            
+            print(f"Saved {len(job_postings)} job postings for {company_code} to {output_file}")
+            
+            return {
+                "company_id": company_data["id"],
+                "company_code": company_code,
+                "platform": platform,
+                "job_count": len(job_postings),
+                "file_path": output_file
+            }
+
 
 # Function to process companies in batches
 def process_companies_batch(**kwargs):
@@ -138,10 +123,12 @@ def process_companies_batch(**kwargs):
         
         for company_data in batch:
             result = collect_job_postings(company_data)
-            results.append(result)
+            results.append(result) # ? : append? let's move to saving to SQL in collect_job_postings
             
             # Rate limiting
             time.sleep(5)  # 5 second delay between API calls
+        
+        # ?: is there pagination in the api call? limit on the results in API call
         
         # Batch delay
         if i + batch_size < len(companies):

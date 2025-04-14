@@ -5,12 +5,11 @@ from typing import List
 import pandas as pd
 import requests
 from datetime import datetime, timezone
-from boards.board import JobBoardAPI
-from db.manager import DBManager
+from dags.job_utils.boards.board import JobBoardAPI
+from dags.job_utils.db.manager import DBManager
 from dags.job_utils.db.models import Company, Job
 from dags.job_utils.utils.constants import JSON_DIR
 from tqdm import tqdm
-
 
 class GreenhouseAPI(JobBoardAPI):
     def __init__(self, db, company_code: str, job_type: str = "FT", country_code: str = "US"):
@@ -23,12 +22,17 @@ class GreenhouseAPI(JobBoardAPI):
         api_endpoint = f"https://boards-api.greenhouse.io/v1/boards/{self.company_code}/jobs"
         response = requests.get(api_endpoint, params={"content": "true"})
         # response = requests.get(api_endpoint)
-        data = response.json()["jobs"] if response.status_code == 200 else None
+        # data = response.json()["jobs"] if response.status_code == 200 else None
+        if not response or "jobs" not in response:
+            return None
+        
+        jobs = response["jobs"]
         # add keyword search in job_title
-        data = self.filter_locations(data)
-        data = self.filter_employment_type(data)
-        data = self.filter_job_titles(data)
-        return data
+        jobs = self.filter_locations(jobs)
+        jobs = self.filter_employment_type(jobs)
+        jobs = self.filter_job_titles(jobs)
+        # TODO: add filter for time period - updated_at, published_at or created_at
+        return jobs if len(jobs) > 0 else None
 
     def filter_job_titles(self, jobs: List):
         filtered_jobs = []

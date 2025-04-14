@@ -1,3 +1,4 @@
+pydantic
 spark-nlp
 pyspark
 pandas

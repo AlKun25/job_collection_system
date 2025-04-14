@@ -6,8 +6,8 @@ from typing import List
 import requests
 from datetime import datetime, timezone
 import pandas as pd
-from boards.board import JobBoardAPI
-from db.manager import DBManager
+from dags.job_utils.boards.board import JobBoardAPI
+from dags.job_utils.db.manager import DBManager
 from dags.job_utils.db.models import Company, Job
 from dags.job_utils.utils.constants import JSON_DIR
 
@@ -21,15 +21,16 @@ class LeverAPI(JobBoardAPI):
     def get_job_postings(self):
         api_endpoint = f"https://api.lever.co/v0/postings/{self.company_code}"
         response = requests.get(api_endpoint)
-        data = response.json() if response.status_code == 200 else None
+        jobs = response.json() if response.status_code == 200 else None
         # *: Debugging stuff
         # print(type(data), type(data[0]), data[0].keys(), data[0]["categories"].keys())
         
         # Filter job postings based on user needs
-        data = self.filter_employment_type(data)
-        data = self.filter_locations(data)
-        data = self.filter_job_titles(data)
-        return data if len(data) > 0 else None
+        jobs = self.filter_locations(jobs)
+        jobs = self.filter_employment_type(jobs)
+        jobs = self.filter_job_titles(jobs)
+        # TODO: add filter for time period - updated_at, published_at or created_at
+        return jobs if len(jobs) > 0 else None
 
     def filter_job_titles(self, jobs: List) -> List:
         # filter on job titles like "software"engineer"

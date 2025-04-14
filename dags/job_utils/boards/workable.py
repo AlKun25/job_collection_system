@@ -5,13 +5,14 @@ from datetime import datetime, timezone
 import json
 import time
 from typing import List
-from boards.board import JobBoardAPI
+from dags.job_utils.boards.board import JobBoardAPI
 from dags.job_utils.utils.constants import JSON_DIR
 from dags.job_utils.db.models import Company, Job
-from db.manager import DBManager
+from dags.job_utils.db.manager import DBManager
 import pandas as pd
 import requests
 from tqdm import tqdm
+# TODO: implement _get_title_field
 
 class WorkableAPI(JobBoardAPI):
     def __init__(self, db, company_code: str, job_type: str = "FT", country_code: str = "US"):
@@ -19,18 +20,25 @@ class WorkableAPI(JobBoardAPI):
         self.job_type = job_type
         self.country_code = country_code
         self.job_type_mapping = { "FT": "Full-time" }
+
     def get_job_postings(self):
         response = requests.get(
             f"https://www.workable.com/api/accounts/{self.company_code}?details=true", # true for job description
             headers={"accept": "application/json"},
         )
         
-        data = response.json()["jobs"] if response.status_code == 200 else None
+        # data = response.json()["jobs"] if response.status_code == 200 else None
 
-        data = self.filter_locations(data)
-        data = self.filter_employment_type(data)
-        data = self.filter_job_titles(data)
-        return data if len(data) > 0 else None
+        if not response or "jobs" not in response:
+            return None
+        
+        jobs = response["jobs"]
+        # add keyword search in job_title
+        jobs = self.filter_locations(jobs)
+        jobs = self.filter_employment_type(jobs)
+        jobs = self.filter_job_titles(jobs)
+        # TODO: add filter for time period - updated_at, published_at or created_at
+        return jobs if len(jobs) > 0 else None
     
     def filter_job_titles(self, jobs: List) -> List:
         filtered_jobs = []

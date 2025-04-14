@@ -22,16 +22,22 @@ class AshbyAPI(JobBoardAPI):
         self.job_type_mapping = {"FT": "FullTime"}
 
     def get_job_postings(self):
+        api_endpoint = f"https://api.ashbyhq.com/posting-api/job-board/{self.company_code}"
         response = requests.get(
-            f"https://api.ashbyhq.com/posting-api/job-board/{self.company_code}",
+            api_endpoint,
             params={"includeCompensation": "true"},
         )
         # there could be some metadata that might be useful, but is lost in here.
-        data = response.json()["jobs"] if response.status_code == 200 else None
-        data = self.filter_locations(data)
-        data = self.filter_employment_type(data)
-        data = self.filter_job_titles(data)
-        return data if len(data) > 0 else None
+        # Extract jobs from response
+        if not response or "jobs" not in response:
+            return None
+            
+        jobs = response["jobs"]
+        jobs = self.filter_locations(jobs)
+        jobs = self.filter_employment_type(jobs)
+        jobs = self.filter_job_titles(jobs)
+        # TODO: add filter for time period - updated_at, published_at or created_at
+        return jobs if len(jobs) > 0 else None
 
     def filter_job_titles(self, jobs: List) -> List:
         filtered_jobs = []
@@ -55,7 +61,7 @@ class AshbyAPI(JobBoardAPI):
     def filter_locations(self, jobs: List) -> List:
         filtered_jobs = []
         for job in jobs:
-            # ? : can we also add if case for "location"
+            # Check location in Ashby's unique structure
             if self.check_country_code(query=job["location"]):
                 filtered_jobs.append(job)
             elif job["address"]:
@@ -63,6 +69,7 @@ class AshbyAPI(JobBoardAPI):
                 if self.check_country_code(query=country):
                     filtered_jobs.append(job)
             else:
+                # logging.info(f"No location found for job: {job['title']}")
                 print("No location or address found for job:", job["title"])
                 print("Job ID:", job["id"])
         return filtered_jobs
