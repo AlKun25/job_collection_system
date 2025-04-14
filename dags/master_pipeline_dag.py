@@ -1,8 +1,39 @@
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.dummy import DummyOperator
+from airflow.operators.python import PythonOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sensors.external_task import ExternalTaskSensor
+from dags.job_utils.db.db_logger import logger
+
+def check_database_health():
+    """Verify database is accessible before running DAG tasks"""
+    from sqlalchemy import create_engine, text
+    import os
+    
+    connection_url = os.environ.get('DATABASE_URL', 'postgresql://airflow:airflow@postgres/job_collection')
+    
+    try:
+        engine = create_engine(connection_url)
+        with engine.connect() as conn:
+            # Simple query to test connectivity
+            result = conn.execute(text("SELECT 1")).scalar()
+            
+            # Check required tables exist
+            table_check = conn.execute(text(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name IN ('companies', 'jobs')"
+            )).scalar()
+            
+            if table_check < 2:
+                raise Exception(f"Missing required tables. Found {table_check}/2 tables.")
+                
+        logger.info("Database health check passed")
+        return True
+    except Exception as e:
+        logger.error(f"Database health check failed: {str(e)}")
+        return False
+
 
 # Default arguments
 default_args = {
@@ -28,6 +59,13 @@ dag = DAG(
 # Start task
 start = DummyOperator(
     task_id='start_pipeline',
+    dag=dag,
+)
+
+# Add health check task to DAG
+db_health_check = PythonOperator(
+    task_id='database_health_check',
+    python_callable=check_database_health,
     dag=dag,
 )
 
@@ -95,4 +133,4 @@ end = DummyOperator(
 )
 
 # Set task dependencies
-start >> trigger_discovery >> wait_for_discovery >> trigger_collection >> wait_for_collection >> trigger_extraction >> wait_for_extraction >> end
+start >> db_health_check >> trigger_discovery >> wait_for_discovery >> trigger_collection >> wait_for_collection >> trigger_extraction >> wait_for_extraction >> end
