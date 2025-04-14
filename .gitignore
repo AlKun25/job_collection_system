@@ -178,3 +178,4 @@ data/
 .DS_Store
 *.csv
 *.log
+oauth2*
