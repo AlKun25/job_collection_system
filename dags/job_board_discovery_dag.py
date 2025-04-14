@@ -1,17 +1,16 @@
 from datetime import datetime, timedelta
+import os
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
 import yagmail
-import sys
-
-# Add the dags directory to the Python path
-sys.path.append("/opt/airflow/dags")
-
-# Import custom modules
 from dags.job_utils.job_board_search import search_job_boards, URL_PATTERNS, ROLES
 from dags.job_utils.db.models import Company
 from dags.job_utils.db.manager import DBContext
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 # Default arguments
 default_args = {
@@ -100,7 +99,7 @@ def send_email(**kwargs):
     ti = kwargs["ti"]
     result = ti.xcom_pull(task_ids="generate_report")
     if result["total_companies_added"] > 0:
-        receiver = "kunalm.jobs@gmail.com"
+        receiver = os.getenv("RECEIVER_EMAIL")
         body = """
         Here are the results of the job board discovery run on {date}:
         
@@ -123,7 +122,7 @@ def send_email(**kwargs):
             ),
         )
         # !: Authentication not working - keyring registration required
-        yag = yagmail.SMTP("kunalm.jobs@gmail.com")
+        yag = yagmail.SMTP(os.getenv("SENDER_USERNAME"), oauth2_file=os.getenv("SENDER_OAUTH2_FILE"))
         try:
             yag.send(
                 to=receiver,
