@@ -1,4 +1,4 @@
-# Job Board Collection System
+# Job Board Collection System [WIP]
 
 A distributed system for discovering, collecting, and analyzing job postings from various job boards.
 
