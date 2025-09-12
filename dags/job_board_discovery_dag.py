@@ -4,6 +4,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
 import yagmail
+from dags.job_utils.config import get_config
 from dags.job_utils.job_board_search import search_job_boards, URL_PATTERNS, ROLES
 from dags.job_utils.db.models import Company
 from dags.job_utils.db.manager import DBContext
